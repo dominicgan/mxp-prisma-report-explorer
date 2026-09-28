@@ -1,0 +1,216 @@
+# Prisma Report Explorer
+
+A browser-based navigator for Prisma Cloud vulnerability exports. Drop in an
+`.xlsx` export and get a filterable dashboard: KPI tiles, charts, a virtualised
+data grid, CVE rollups and a remediation plan.
+
+The file never leaves the machine — parsing happens in the browser.
+
+```bash
+npm install
+npm run dev
+```
+
+Then drop your export on the page, or click **Load sample** to use the bundled
+19-row snapshot in `public/samples/`.
+
+## The determinism contract
+
+The same file always produces the same dashboard. That rests on four rules:
+
+1. **Columns are matched by header name, not position.** Every column is
+   normalised (case, whitespace, non-breaking spaces, trailing punctuation) and
+   looked up in an alias table in [`src/lib/schema.ts`](src/lib/schema.ts). A
+   re-export with reordered or renamed-in-case columns lands on the same fields.
+   Unrecognised columns are kept and shown in the grid's column chooser rather
+   than dropped.
+2. **The header row is found, not assumed.** The parser scans the first 25 rows
+   and picks the one matching the most known headers, so a title block above the
+   table does not break it.
+3. **Dates are decoded in UTC.** Excel serials are converted against the
+   1899-12-30 epoch directly instead of letting the spreadsheet library build
+   `Date` objects, which would bake the *reader's* timezone into the result and
+   make the same file parse differently in Kuala Lumpur and in Prague.
+4. **Row identity is content-derived.** Each row's id is a hash of CVE, image,
+   digest, repo, tag, namespace, cluster, host, package and path. The report
+   also carries a `fingerprint` (visible under the ⓘ button) — two parses of the
+   same bytes always produce the same fingerprint.
+
+Verify any export against these rules without opening the UI:
+
+```bash
+npm run verify -- path/to/your-export.xlsx
+```
+
+It prints the column mapping, what was skipped, the derived breakdowns and a
+sample row, then asserts that the parse is stable and well-formed.
+
+## Multi-sheet workbooks
+
+If the workbook has more than one sheet you get a picker, with each tab summarised
+by how many of its headers match the Prisma schema — the real export is usually
+obvious at a glance:
+
+```
+  Cover      ~4 data rows  ·  2 columns  ·  0 recognised   Unrecognised
+  Summary    ~2 data rows  ·  2 columns  ·  2 recognised   Unrecognised
+  Export    ~22 data rows  · 56 columns  · 56 recognised   Prisma export
+  Appendix   ~1 data rows  ·  1 columns  ·  0 recognised   Unrecognised
+```
+
+Inspection only touches each sheet's declared range and its first 25 rows, so the
+picker opens instantly even on a large workbook. A single-sheet file skips the
+picker entirely.
+
+**Your choice is remembered in `localStorage`**, at two levels:
+
+| Level | Key | Behaviour |
+|---|---|---|
+| This exact file | SHA-256 of the file's bytes | Re-uploading the identical workbook skips the picker and loads straight in — even if the file has been renamed |
+| This sheet name | the names you have picked before | A *new* export has different bytes, so it still asks — but the sheet you usually pick is pre-selected |
+
+The distinction matters: silently reusing a choice across a file you have never
+seen before would be a good way to read the wrong tab without noticing.
+
+Once loaded, the toolbar shows which sheet is being read and why
+(`chosen by you`, `remembered from a previous upload`, …). Use it to switch
+sheets — that re-parses the workbook already in memory, so it is instant — or to
+stop remembering the choice for that file.
+
+The CLI check understands sheets too:
+
+```bash
+npm run verify -- report.xlsx                 # lists sheets, picks the best one
+npm run verify -- report.xlsx --sheet Export  # force a specific sheet
+```
+
+`public/samples/prisma-multi-sheet.xlsx` is a synthetic four-sheet fixture for
+exercising this.
+
+## CVE hover preview
+
+Hovering a CVE cell opens a preview card, in two layers:
+
+1. **Instantly**, from the export itself — severity, CVSS, the vulnerability
+   description and the remediation line.
+2. **Then live**, from [OSV](https://osv.dev) and
+   [FIRST EPSS](https://www.first.org/epss/): a plain-language exploit-probability
+   bar, the OSV summary, fixed versions per ecosystem, and aliases (GHSA etc.).
+
+> **Why this is not an iframe of the CVE page.** NVD, MITRE and CISA all serve
+> `X-Frame-Options: DENY` and a `frame-ancestors` CSP, so a browser refuses to
+> render them in a frame — an embedded preview of those pages is blank by
+> design, not by misconfiguration. These two APIs are the CORS-enabled sources
+> that let the same information be shown natively.
+
+Lookups fire only on hover, are cached for the session, and send **only the CVE
+id** — no report content leaves the machine. If your environment does not permit
+calls to third-party APIs from an analyst's browser, turn them off under the 🔗
+CVE menu; the card then shows the report's own data only. That preference is
+remembered.
+
+## What it reads from the export
+
+The sample export has 56 columns and three kinds of row:
+
+| Row kind | Handling |
+|---|---|
+| Data rows | Parsed into findings |
+| `Total` footer | Skipped; its grand total is surfaced separately as "Export total" |
+| `Applied filters:` footer | Skipped; shown under ⓘ as report provenance |
+
+A row counts as data only if it fills at least 20% of the mapped columns, which
+is what keeps the sparse footer rows out of the dataset.
+
+### Derived fields
+
+These are computed, never read from the sheet:
+
+| Field | How it is derived |
+|---|---|
+| **Surface** (Container / Code) | Tiered: package type first (`deb`/`rpm`/`apk` → Container, `jar`/`npm`/`python`/… → Code), then Prisma's vulnerability category, then the PURL scheme. Every finding records *why* it was classified — hover the badge. |
+| **Exploitable / Patchable** | Strict tri-state (`Yes` / `No` / `Unknown`) parsed from `Is Exploitable` / `Is Patchable`. Blank stays `Unknown` rather than being guessed as `No`. |
+| **Triage class** | The exploitable × patchable cross-product. |
+| **Age** | Days since `Discovered`, plus an ordered bucket (0-7d … 180d+). |
+
+## Views
+
+- **Overview** — KPI tiles, severity donut, the exploitable × patchable matrix,
+  container-vs-code split, top repos, environment/exposure, age and discovery
+  timeline. Every tile and chart element is a filter: click it.
+- **Findings** — the full ag-grid, with a CVE hover preview. All 56 columns available via the column
+  chooser, per-column filters, sorting, CSV export of the current view.
+- **By CVE** — one row per CVE with its blast radius: how many findings, how
+  many repos and namespaces, whether *any* instance is exploitable or patchable.
+- **Remediation** — one row per package: *"if I bump this one dependency, how
+  many findings close and which repos do I have to touch?"* Sorted by blast
+  radius, which is the fastest route from a 10k-row export to a sprint plan.
+
+## Filtering
+
+The left sidebar is a faceted filter over every dimension in the export. Counts
+are computed against the rows surviving all *other* filters, so selecting one
+value does not zero out its siblings.
+
+**Filter state lives in the URL.** A filtered view is a shareable link and
+survives a reload — use the 🔗 button to copy one.
+
+## CVE links
+
+Any value matching `CVE-YYYY-NNNN` links out to a vulnerability database;
+internal identifiers like `SW-Bulletin-4105464` render as plain text rather than
+a dead link. Pick the target database from the toolbar:
+
+NVD · MITRE · CISA KEV · OSV · GitHub Advisory · FIRST EPSS
+
+The detail sheet offers all six at once for the selected finding.
+
+## Stack
+
+- **Vite + React 19 + TypeScript**
+- **Tailwind v4** + **shadcn/ui** components (vendored into `src/components/ui`)
+- **ag-grid-community** 36 — row virtualisation, so 10k+ rows scroll smoothly
+- **Recharts** 3 via shadcn-style chart wrappers
+- **SheetJS (`xlsx`)** for parsing
+
+### A note on the `xlsx` dependency
+
+This installs SheetJS **0.20.3 from the vendor's own CDN**, which is how SheetJS
+now distributes it:
+
+```
+npm i https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
+```
+
+The copy on the public npm registry is abandoned at 0.18.5 and carries a
+prototype-pollution advisory (GHSA-4r6h-8v6p-xvw6). For a security-reporting
+tool, shipping that would be a bad look. If you re-lock dependencies, keep the
+CDN URL.
+
+## Colour
+
+Charts use a palette validated for colour-vision deficiency and contrast against
+both the light and dark surfaces. Severity is treated as a **status** scale, not
+a series palette: its four steps are fixed in both modes and every severity is
+rendered with its text label, so hue never carries the meaning alone.
+
+## Project layout
+
+```
+src/
+  lib/
+    schema.ts     canonical fields + header aliases
+    parse.ts      workbook -> findings, sheet inspection, fingerprint
+    sheet-prefs.ts  remembered sheet choice (localStorage)
+    cve-data.ts   live OSV + EPSS lookup for the hover card
+    filters.ts    filter model, faceting, URL serialisation
+    stats.ts      KPIs, breakdowns, CVE and remediation rollups
+    cve.ts        vulnerability database links
+    format.ts     number/date formatting (UTC)
+  components/
+    ui/           shadcn primitives
+    charts/       dashboard charts
+    ...           facet panel, grids, detail sheet, toolbar
+scripts/
+  verify-parse.ts parser smoke test / determinism check
+```
