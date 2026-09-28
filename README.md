@@ -213,6 +213,11 @@ value does not zero out its siblings.
 **Filter state lives in the URL.** A filtered view is a shareable link and
 survives a reload — use the 🔗 button to copy one.
 
+The panel is resizable — repo names, package paths and owner groups routinely
+run past any fixed width. Drag its right edge, double-click to reset, or focus
+the divider and use the arrow keys (`Shift` for bigger steps, `Home`/`End` for
+the limits). The width is remembered.
+
 ## CVE links
 
 Any value matching `CVE-YYYY-NNNN` links out to a vulnerability database;

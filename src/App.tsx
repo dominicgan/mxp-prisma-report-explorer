@@ -14,6 +14,7 @@ import { FacetPanel } from '@/components/facet-panel'
 import { FindingDetail } from '@/components/finding-detail'
 import { exportGridCsv, FindingsGrid } from '@/components/findings-grid'
 import { KpiCards } from '@/components/kpi-cards'
+import { ResizableSidebar } from '@/components/resizable-sidebar'
 import { CveGrid, FixGrid } from '@/components/rollup-grids'
 import { SheetPicker } from '@/components/sheet-picker'
 import { ThemeProvider } from '@/components/theme-provider'
@@ -29,7 +30,6 @@ import { setFacet, toggleFacet } from '@/lib/filters'
 import type { Finding } from '@/lib/parse'
 import { bestSheet } from '@/lib/parse'
 import { computeKpis } from '@/lib/stats'
-import { cn } from '@/lib/utils'
 
 const SAMPLE_URL = `${import.meta.env.BASE_URL}samples/prisma-sample-dump.xlsx`
 
@@ -152,12 +152,7 @@ function Explorer() {
       />
 
       <div className="flex min-h-0 flex-1">
-        <aside
-          className={cn(
-            'bg-card/40 w-64 shrink-0 border-r transition-[width] duration-150',
-            !sidebarOpen && 'w-0 overflow-hidden border-r-0',
-          )}
-        >
+        <ResizableSidebar open={sidebarOpen} className="bg-card/40 border-r">
           <FacetPanel
             rows={rows}
             filters={filters}
@@ -165,7 +160,7 @@ function Explorer() {
             setFilters={setFilters}
             availableKeys={availableKeys}
           />
-        </aside>
+        </ResizableSidebar>
 
         <main className="flex min-w-0 flex-1 flex-col">
           <Tabs value={tab} onValueChange={changeTab} className="flex min-h-0 flex-1 flex-col gap-0">
