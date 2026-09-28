@@ -114,7 +114,12 @@ export interface Recall {
 export function recallSheet(key: string, available: string[]): Recall | null {
   const prefs = loadPrefs()
   const exact = prefs.byFile[key]
-  if (exact && available.includes(exact)) return { sheetName: exact, source: 'file' }
+  // An empty candidate list means "we have not inspected the workbook yet" -
+  // an exact file match is still valid, since it was recorded against these
+  // very bytes.
+  if (exact && (available.length === 0 || available.includes(exact))) {
+    return { sheetName: exact, source: 'file' }
+  }
 
   for (const name of prefs.recentNames) {
     if (available.includes(name)) return { sheetName: name, source: 'name' }

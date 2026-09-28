@@ -109,6 +109,64 @@ calls to third-party APIs from an analyst's browser, turn them off under the �
 CVE menu; the card then shows the report's own data only. That preference is
 remembered.
 
+## Performance on large exports
+
+A real export is ~30MB zipped but **343MB uncompressed**: 91,578 findings across
+56 columns, plus a 166MB pivot cache Excel leaves behind. Numbers below are from
+profiling that file, not the 19-row sample.
+
+Where the time actually went, before any of this work (Node, ~18.4s total):
+
+| Phase | Time | Share |
+|---|---|---|
+| `XLSX.read` — every sheet, sparse | 14.3s | 78% |
+| `sheet_to_json` — a second full copy | 2.2s | 12% |
+| row loop → `Finding[]` | 2.0s | 10% |
+
+What changed:
+
+- **Dense cell storage** (`dense: true`). A sparse read keys all 5.1M cells into
+  one A1-addressed map. Dense stores `[row][col]` instead: **14.3s → 8.4s**, peak
+  heap 860MB → 600MB. Single biggest win.
+- **Two-pass read.** The sheet picker only looks at 25 rows per sheet, so it now
+  reads with `sheetRows: 25` (~2.5s) and the picker appears almost immediately
+  instead of after the whole workbook is inflated. The chosen sheet is then read
+  on its own.
+- **No intermediate matrix.** The row loop walks the dense grid directly instead
+  of materialising `sheet_to_json`'s second full copy.
+- **Parsing in a Web Worker.** Worst main-thread stall during a full load went
+  from *seconds of frozen tab* to **2ms**, with a real progress bar.
+- **IndexedDB cache**, keyed by the same file-content hash as the sheet memory.
+  Reopening the same export: **~40s → ~1.7s** (measured back-to-back; the
+  machine was loaded, so treat the ratio as the signal, not the absolute).
+- **Single-pass faceting.** Counting each open facet separately meant one full
+  scan per facet — five open facets over 91k rows measured **344ms** per filter
+  change. One pass with a per-row fail-count does the same work in **70ms**, with
+  byte-identical output.
+- **Debounce fix.** The facet panel was counting against the *undebounced* filter
+  state, so every keystroke in the search box triggered those scans while the
+  grid and charts correctly waited.
+
+Two things the plan expected that measurement contradicted, and which were
+therefore **not** done:
+
+- *Reading only the chosen sheet is a big win.* It is not: `sheets: ['Export']`
+  saved 0.1s, because the other tab is small and the cost is inflating the data
+  sheet itself. Kept anyway — it bounds peak memory — but it is not the lever.
+- *Collapsing the ~12 chart tally passes.* All of them together take **19ms** on
+  the filtered set. Not worth the loss of clarity.
+
+Columnar storage / DuckDB-WASM were also left alone: the argument for them was
+that returning rows from a worker would be too slow, but structured-cloning all
+91,578 rows measures **0.9s**, so that argument does not hold here.
+
+### Known ceiling
+
+Chrome refuses a single IndexedDB value over ~127MB, and this report serialises
+to ~235MB, so cached rows are written in chunks of 10,000. The cache read is
+also sliced with yields between chunks — pulling it back in one burst blocked
+the main thread for 4.6s.
+
 ## What it reads from the export
 
 The sample export has 56 columns and three kinds of row:
@@ -201,6 +259,9 @@ src/
   lib/
     schema.ts     canonical fields + header aliases
     parse.ts      workbook -> findings, sheet inspection, fingerprint
+    parse.worker.ts  parsing off the main thread
+    parse-client.ts  main-thread handle on the worker
+    report-cache.ts  parsed reports cached in IndexedDB (chunked)
     sheet-prefs.ts  remembered sheet choice (localStorage)
     cve-data.ts   live OSV + EPSS lookup for the hover card
     filters.ts    filter model, faceting, URL serialisation

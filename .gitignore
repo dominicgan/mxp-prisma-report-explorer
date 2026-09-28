@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Temporary: real export used for local perf testing, never committed
+public/samples/_local-*

@@ -6,7 +6,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { num } from '@/lib/format'
-import { clearFacet, facetValues, toggleFacet, type FilterState } from '@/lib/filters'
+import { clearFacet, facetValuesMany, toggleFacet, type FacetValue, type FilterState } from '@/lib/filters'
 import type { Finding } from '@/lib/parse'
 import { FIELD_BY_KEY } from '@/lib/schema'
 import { cn } from '@/lib/utils'
@@ -44,11 +44,18 @@ const DEFAULT_OPEN = new Set(['exploitable', 'patchable', 'surface', 'repo', 'se
 export function FacetPanel({
   rows,
   filters,
+  countBasis,
   setFilters,
   availableKeys,
 }: {
   rows: Finding[]
+  /** Live state - drives checkbox state and every mutation. */
   filters: FilterState
+  /**
+   * Debounced state - drives the facet count scans only. Counting on the live
+   * state re-scans the whole report on every keystroke in the search box.
+   */
+  countBasis: FilterState
   setFilters: (f: FilterState) => void
   availableKeys: Set<string>
 }) {
@@ -61,6 +68,22 @@ export function FacetPanel({
         keys: g.keys.filter((k) => availableKeys.has(k)),
       })).filter((g) => g.keys.length > 0),
     [availableKeys],
+  )
+
+  // Only expanded facets are counted - a collapsed one is not on screen, and a
+  // real export has thousands of distinct packages and images.
+  const openKeys = useMemo(
+    () => groups.flatMap((g) => g.keys).filter((k) => open.has(k)),
+    [groups, open],
+  )
+  const openKeySig = openKeys.join(',')
+
+  // One pass over the rows for every open facet at once, rather than one full
+  // scan each.
+  const facetData = useMemo(
+    () => facetValuesMany(rows, countBasis, openKeys),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, countBasis, openKeySig],
   )
 
   return (
@@ -76,8 +99,8 @@ export function FacetPanel({
                 <Facet
                   key={key}
                   facetKey={key}
-                  rows={rows}
                   filters={filters}
+                  values={facetData.get(key) ?? EMPTY_VALUES}
                   setFilters={setFilters}
                   isOpen={open.has(key)}
                   onToggleOpen={() =>
@@ -98,30 +121,25 @@ export function FacetPanel({
   )
 }
 
+const EMPTY_VALUES: FacetValue[] = []
+
 function Facet({
   facetKey,
-  rows,
   filters,
+  values,
   setFilters,
   isOpen,
   onToggleOpen,
 }: {
   facetKey: string
-  rows: Finding[]
   filters: FilterState
+  values: FacetValue[]
   setFilters: (f: FilterState) => void
   isOpen: boolean
   onToggleOpen: () => void
 }) {
   const [search, setSearch] = useState('')
   const [showAll, setShowAll] = useState(false)
-
-  // Only computed while the facet is expanded - a 10k-row export has a lot of
-  // distinct repos and package names, and most facets stay collapsed.
-  const values = useMemo(
-    () => (isOpen ? facetValues(rows, filters, facetKey) : []),
-    [isOpen, rows, filters, facetKey],
-  )
 
   const selectedCount = filters.facets[facetKey]?.length ?? 0
   const filtered = useMemo(() => {

@@ -23,7 +23,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { UploadZone } from '@/components/upload-zone'
-import { useFilteredRows, useFilters, useReport } from '@/hooks/use-report'
+import { useEffectiveFilters, useFilteredRows, useFilters, useReport } from '@/hooks/use-report'
 import { DEFAULT_CVE_SOURCE } from '@/lib/cve'
 import { setFacet, toggleFacet } from '@/lib/filters'
 import type { Finding } from '@/lib/parse'
@@ -50,7 +50,8 @@ function Explorer() {
   }, [])
 
   const rows = report.rows
-  const filtered = useFilteredRows(rows, filters)
+  const effective = useEffectiveFilters(filters)
+  const filtered = useFilteredRows(rows, effective)
   const kpis = useMemo(() => computeKpis(filtered), [filtered])
 
   /** Which facet keys this particular export actually has values for. */
@@ -124,6 +125,7 @@ function Explorer() {
         error={report.error}
         onLoadSample={loadSample}
         onBackToSheets={report.sheets.length > 1 ? report.reopenPicker : undefined}
+        progress={report.progress}
       />
     )
   }
@@ -156,7 +158,13 @@ function Explorer() {
             !sidebarOpen && 'w-0 overflow-hidden border-r-0',
           )}
         >
-          <FacetPanel rows={rows} filters={filters} setFilters={setFilters} availableKeys={availableKeys} />
+          <FacetPanel
+            rows={rows}
+            filters={filters}
+            countBasis={effective}
+            setFilters={setFilters}
+            availableKeys={availableKeys}
+          />
         </aside>
 
         <main className="flex min-w-0 flex-1 flex-col">

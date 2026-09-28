@@ -1,15 +1,8 @@
-import type { WorkBook } from 'xlsx'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { decodeFilters, encodeFilters, EMPTY_FILTERS, applyFilters, type FilterState } from '@/lib/filters'
-import {
-  inspectWorkbook,
-  parseSheet,
-  readWorkbook,
-  type Finding,
-  type ReportMeta,
-  type SheetChoice,
-  type SheetInfo,
-} from '@/lib/parse'
+import type { Finding, ReportMeta, SheetChoice, SheetInfo } from '@/lib/parse'
+import { ParseClient, type Progress } from '@/lib/parse-client'
+import { readCachedReport, writeCachedReport } from '@/lib/report-cache'
 import { fileKey, forgetFile, recallSheet, rememberSheet, type Recall } from '@/lib/sheet-prefs'
 
 export interface ReportState {
@@ -25,6 +18,10 @@ export interface ReportState {
   fileName: string | null
   /** Set when a sheet was pre-selected from a previous session. */
   recalled: Recall | null
+  /** What the worker is doing right now, while status is 'loading'. */
+  progress: Progress | null
+  /** True when the rows came back from the cache rather than a fresh parse. */
+  fromCache: boolean
 }
 
 const INITIAL: ReportState = {
@@ -35,6 +32,8 @@ const INITIAL: ReportState = {
   fileKey: null,
   fileName: null,
   recalled: null,
+  progress: null,
+  fromCache: false,
 }
 
 const NO_ROWS_ERROR =
@@ -42,14 +41,32 @@ const NO_ROWS_ERROR =
 
 export function useReport() {
   const [state, setState] = useState<ReportState>(INITIAL)
-  // The parsed workbook stays in memory so switching sheets is instant rather
-  // than re-reading and re-inflating the file each time.
-  const workbook = useRef<WorkBook | null>(null)
+  const client = useRef<ParseClient | null>(null)
 
-  const parseInto = useCallback(
-    (wb: WorkBook, fileName: string, sheetName: string, sheetChoice: SheetChoice, sheets: SheetInfo[], key: string, recalled: Recall | null) => {
-      try {
-        const { rows, meta } = parseSheet(wb, fileName, { sheetName, sheetChoice })
+  // Callbacks read the latest state through this instead of taking it as a
+  // dependency, which would rebuild them on every progress tick.
+  const stateRef = useRef(state)
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
+
+  const getClient = useCallback(() => {
+    if (!client.current) client.current = new ParseClient()
+    return client.current
+  }, [])
+
+  useEffect(() => () => client.current?.dispose(), [])
+
+  const runParse = useCallback(
+    async (
+      fileName: string,
+      sheetName: string,
+      sheetChoice: SheetChoice,
+      sheets: SheetInfo[],
+      key: string,
+      recalled: Recall | null,
+    ) => {
+      const settle = (rows: Finding[], meta: ReportMeta, fromCache: boolean) =>
         setState({
           rows,
           meta,
@@ -59,52 +76,100 @@ export function useReport() {
           fileKey: key,
           fileName,
           recalled,
+          progress: null,
+          fromCache,
         })
+
+      try {
+        // A parsed copy of this exact file+sheet is ~20x cheaper to read back
+        // than to re-derive.
+        setState((s) => ({ ...s, status: 'loading', progress: { phase: 'Checking cache', pct: null } }))
+        const cached = await readCachedReport(key, sheetName, (pct) =>
+          setState((s) => (s.status === 'loading' ? { ...s, progress: { phase: 'Loading cached report', pct } } : s)),
+        )
+        if (cached) {
+          settle(cached.rows, { ...cached.meta, sheetChoice }, true)
+          return
+        }
+
+        const { rows, meta } = await getClient().parse(fileName, sheetName, sheetChoice, (progress) =>
+          setState((s) => (s.status === 'loading' ? { ...s, progress } : s)),
+        )
+        settle(rows, meta, false)
+
+        // Populate the cache after the report is on screen; a failure here is
+        // invisible and only costs a re-parse next time.
+        if (rows.length) void writeCachedReport(key, sheetName, rows, meta, sheets)
       } catch (e) {
         setState((s) => ({
           ...s,
           status: 'error',
+          progress: null,
           error: e instanceof Error ? e.message : String(e),
         }))
       }
     },
-    [],
+    [getClient],
   )
 
   const load = useCallback(
     async (file: File | Blob, fileName: string) => {
-      setState({ ...INITIAL, status: 'loading', fileName })
+      setState({ ...INITIAL, status: 'loading', fileName, progress: { phase: 'Reading file', pct: null } })
       try {
         const buf = await file.arrayBuffer()
-        // Yield a frame so the loading state actually paints before the
-        // synchronous read blocks the thread.
-        await new Promise((r) => requestAnimationFrame(() => r(null)))
-
         const key = await fileKey(buf)
-        const wb = readWorkbook(buf)
-        workbook.current = wb
-        const sheets = inspectWorkbook(wb)
+
+        // Fast path: a sheet we already chose for this exact file, already
+        // parsed and cached. Inspecting the workbook would cost ~3s to
+        // rediscover something the cache already knows, so skip it and just
+        // hand the bytes to the worker in case a later sheet switch needs them.
+        const remembered = recallSheet(key, [])
+        const rememberedName = remembered?.source === 'file' ? remembered.sheetName : undefined
+        if (rememberedName) {
+          setState((s) => ({ ...s, progress: { phase: 'Checking cache', pct: null } }))
+          const hit = await readCachedReport(key, rememberedName, (pct) =>
+            setState((s) => ({ ...s, progress: { phase: 'Loading cached report', pct } })),
+          )
+          if (hit && hit.sheets.length) {
+            setState({
+              rows: hit.rows,
+              meta: { ...hit.meta, sheetChoice: 'remembered' },
+              status: hit.rows.length ? 'ready' : 'error',
+              error: hit.rows.length ? undefined : NO_ROWS_ERROR,
+              sheets: hit.sheets,
+              fileKey: key,
+              fileName,
+              recalled: remembered,
+              progress: null,
+              fromCache: true,
+            })
+            void getClient().attach(buf)
+            return
+          }
+        }
+
+        // fileKey read the bytes already; the worker takes ownership from here
+        // (the buffer is transferred, so it is detached on this side).
+        const sheets = await getClient().inspect(buf, (progress) =>
+          setState((s) => (s.status === 'loading' ? { ...s, progress } : s)),
+        )
 
         if (sheets.length === 0) {
           setState({ ...INITIAL, status: 'error', error: 'That workbook has no sheets.', fileName })
           return
         }
 
-        // A single-sheet workbook has nothing to choose.
         if (sheets.length === 1) {
-          parseInto(wb, fileName, sheets[0].name, 'only-sheet', sheets, key, null)
+          await runParse(fileName, sheets[0].name, 'only-sheet', sheets, key, null)
           return
         }
 
         const recalled = recallSheet(key, sheets.map((s) => s.name))
         if (recalled?.source === 'file') {
-          // An exact content match is a decision this user already made about
-          // this exact file, so honour it without asking again.
-          parseInto(wb, fileName, recalled.sheetName, 'remembered', sheets, key, recalled)
+          await runParse(fileName, recalled.sheetName, 'remembered', sheets, key, recalled)
           return
         }
 
-        // Otherwise ask, with the best guess pre-selected.
         setState({ ...INITIAL, status: 'choosing', sheets, fileKey: key, fileName, recalled })
       } catch (e) {
         setState({
@@ -115,36 +180,30 @@ export function useReport() {
         })
       }
     },
-    [parseInto],
+    [getClient, runParse],
   )
 
   /** Commit a sheet choice from the picker. */
   const chooseSheet = useCallback(
     (sheetName: string, remember: boolean) => {
-      const wb = workbook.current
-      setState((s) => {
-        if (!wb || !s.fileKey || !s.fileName) return s
-        if (remember) rememberSheet(s.fileKey, sheetName)
-        else forgetFile(s.fileKey)
-        queueMicrotask(() => parseInto(wb, s.fileName!, sheetName, 'chosen', s.sheets, s.fileKey!, s.recalled))
-        return { ...s, status: 'loading' }
-      })
+      const { fileKey: key, fileName, sheets, recalled } = stateRef.current
+      if (!key || !fileName) return
+      if (remember) rememberSheet(key, sheetName)
+      else forgetFile(key)
+      void runParse(fileName, sheetName, 'chosen', sheets, key, recalled)
     },
-    [parseInto],
+    [runParse],
   )
 
   /** Switch sheets after the fact, from the toolbar. Always updates the memory. */
   const switchSheet = useCallback(
     (sheetName: string) => {
-      const wb = workbook.current
-      setState((s) => {
-        if (!wb || !s.fileKey || !s.fileName || sheetName === s.meta?.sheetName) return s
-        rememberSheet(s.fileKey, sheetName)
-        queueMicrotask(() => parseInto(wb, s.fileName!, sheetName, 'chosen', s.sheets, s.fileKey!, s.recalled))
-        return { ...s, status: 'loading' }
-      })
+      const { fileKey: key, fileName, sheets, recalled, meta } = stateRef.current
+      if (!key || !fileName || sheetName === meta?.sheetName) return
+      rememberSheet(key, sheetName)
+      void runParse(fileName, sheetName, 'chosen', sheets, key, recalled)
     },
-    [parseInto],
+    [runParse],
   )
 
   /** Go back to the picker without dropping the loaded workbook. */
@@ -161,7 +220,8 @@ export function useReport() {
   }, [])
 
   const reset = useCallback(() => {
-    workbook.current = null
+    client.current?.dispose()
+    client.current = null
     setState(INITIAL)
   }, [])
 
@@ -203,8 +263,19 @@ export function useDebounced<T>(value: T, ms = 200): T {
   return v
 }
 
-export function useFilteredRows(rows: Finding[], filters: FilterState): Finding[] {
+/**
+ * The filter state everything *expensive* should read: identical to the live
+ * state except the search box lags by one debounce interval.
+ *
+ * Keep this separate from the live state - anything that mutates filters must
+ * start from the live copy, or a keystroke in flight gets clobbered by a stale
+ * `q`.
+ */
+export function useEffectiveFilters(filters: FilterState): FilterState {
   const debouncedQ = useDebounced(filters.q, 200)
-  const effective = useMemo(() => ({ ...filters, q: debouncedQ }), [filters, debouncedQ])
+  return useMemo(() => ({ ...filters, q: debouncedQ }), [filters, debouncedQ])
+}
+
+export function useFilteredRows(rows: Finding[], effective: FilterState): Finding[] {
   return useMemo(() => applyFilters(rows, effective), [rows, effective])
 }

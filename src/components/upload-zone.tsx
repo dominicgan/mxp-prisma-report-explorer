@@ -12,11 +12,14 @@ export function UploadZone({
   error,
   onLoadSample,
   onBackToSheets,
+  progress,
 }: {
   onFile: (file: File) => void
   status: 'empty' | 'loading' | 'choosing' | 'ready' | 'error'
   error?: string
   onLoadSample?: () => void
+  /** What the parsing worker is doing, while status is 'loading'. */
+  progress?: { phase: string; pct: number | null } | null
   /** Offered when the failure was "wrong sheet" and the workbook is still open. */
   onBackToSheets?: () => void
 }) {
@@ -68,8 +71,31 @@ export function UploadZone({
         ) : (
           <FileSpreadsheetIcon className="text-muted-foreground size-7" />
         )}
-        <p className="mt-3 text-sm font-medium">{busy ? 'Parsing workbook…' : 'Drop your export here'}</p>
-        <p className="text-muted-foreground mt-1 text-xs">.xlsx, .xlsm, .xls or .csv</p>
+        <p className="mt-3 text-sm font-medium">
+          {busy ? `${progress?.phase ?? 'Parsing workbook'}…` : 'Drop your export here'}
+        </p>
+        {busy ? (
+          <div className="mt-2 w-56">
+            <div className="bg-muted h-1 overflow-hidden rounded-full">
+              {progress?.pct == null ? (
+                // Indeterminate: a sliding segment, not a full bar - a filled
+                // track here would read as "done" and then jump back to 0%
+                // when the next phase starts reporting a real percentage.
+                <div className="bg-primary h-full w-1/3 animate-[indeterminate_1.1s_ease-in-out_infinite] rounded-full" />
+              ) : (
+                <div
+                  className="bg-primary h-full rounded-full transition-[width] duration-200"
+                  style={{ width: `${Math.round(progress.pct * 100)}%` }}
+                />
+              )}
+            </div>
+            <p className="text-muted-foreground mt-1.5 text-center text-xs tabular-nums">
+              {progress?.pct == null ? 'Working…' : `${Math.round(progress.pct * 100)}%`}
+            </p>
+          </div>
+        ) : (
+          <p className="text-muted-foreground mt-1 text-xs">.xlsx, .xlsm, .xls or .csv</p>
+        )}
 
         <input
           ref={inputRef}

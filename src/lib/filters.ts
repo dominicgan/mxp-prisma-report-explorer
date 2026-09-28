@@ -123,27 +123,126 @@ export interface FacetValue {
   selected: boolean
 }
 
+function facetValueOf(r: Finding, key: string): string {
+  const raw = r[key]
+  return raw == null || raw === '' ? '(blank)' : String(raw)
+}
+
+/**
+ * Facet counts for several facets in a single pass.
+ *
+ * Each facet must be counted against the rows surviving every *other* filter,
+ * so selecting a value doesn't zero out its siblings. Done naively that is one
+ * full scan per open facet - five open facets over 91k rows measured at 421ms
+ * per filter change, which is felt.
+ *
+ * Instead, walk the rows once and count how many facet constraints each row
+ * fails:
+ *
+ *   fails 0  -> the row survives everything, so it counts toward every facet
+ *   fails 1  -> it counts toward exactly that one facet (which ignores itself)
+ *   fails 2+ -> it counts toward nothing
+ *
+ * Non-facet constraints (search, CVSS, dates) are not per-facet, so a row
+ * failing any of them is dropped up front.
+ */
+export function facetValuesMany(
+  rows: Finding[],
+  f: FilterState,
+  keys: string[],
+  limit = 500,
+): Map<string, FacetValue[]> {
+  const constraints = Object.entries(f.facets)
+    .filter(([, v]) => v.length > 0)
+    .map(([k, v]) => [k, new Set(v)] as const)
+
+  const terms = f.q.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const from = f.discoveredFrom ? Date.parse(`${f.discoveredFrom}T00:00:00Z`) : undefined
+  const to = f.discoveredTo ? Date.parse(`${f.discoveredTo}T23:59:59.999Z`) : undefined
+
+  const counts = new Map<string, Map<string, number>>()
+  for (const k of keys) counts.set(k, new Map())
+
+  for (const r of rows) {
+    if (!passesNonFacet(r, f, terms, from, to)) continue
+
+    let failed: string | null = null
+    let failCount = 0
+    for (const [k, set] of constraints) {
+      if (!set.has(facetValueOf(r, k))) {
+        failCount++
+        if (failCount > 1) break
+        failed = k
+      }
+    }
+    if (failCount > 1) continue
+
+    if (failCount === 0) {
+      for (const k of keys) {
+        const m = counts.get(k)!
+        const v = facetValueOf(r, k)
+        m.set(v, (m.get(v) ?? 0) + 1)
+      }
+    } else if (failed !== null) {
+      const m = counts.get(failed)
+      if (m) {
+        const v = facetValueOf(r, failed)
+        m.set(v, (m.get(v) ?? 0) + 1)
+      }
+    }
+  }
+
+  const out = new Map<string, FacetValue[]>()
+  for (const k of keys) {
+    const m = counts.get(k)!
+    const selected = new Set(f.facets[k] ?? [])
+    // Selected values always appear, even at count 0, so they stay un-selectable-away.
+    for (const v of selected) if (!m.has(v)) m.set(v, 0)
+    out.set(
+      k,
+      [...m.entries()]
+        .map(([value, count]) => ({ value, count, selected: selected.has(value) }))
+        .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value))
+        .slice(0, limit),
+    )
+  }
+  return out
+}
+
+/** Everything except the per-facet value constraints. */
+function passesNonFacet(
+  r: Finding,
+  f: FilterState,
+  terms: string[],
+  from: number | undefined,
+  to: number | undefined,
+): boolean {
+  if (f.cveOnly && !r.cve) return false
+
+  if (f.cvssMin != null || f.cvssMax != null) {
+    const c = r.cvss as number | undefined
+    if (c == null) return false
+    if (f.cvssMin != null && c < f.cvssMin) return false
+    if (f.cvssMax != null && c > f.cvssMax) return false
+  }
+
+  if (from != null || to != null) {
+    const d = r.discovered as string | undefined
+    if (!d) return false
+    const t = Date.parse(d)
+    if (from != null && t < from) return false
+    if (to != null && t > to) return false
+  }
+
+  return matchesQuery(r, terms)
+}
+
 /**
  * Facet counts are computed against the rows surviving all *other* filters, so
- * selecting one value in a facet doesn't zero out its siblings - the usual
- * behaviour people expect from a faceted search.
+ * selecting one value in a facet doesn't zero out its siblings.
  */
 export function facetValues(rows: Finding[], f: FilterState, key: string, limit = 500): FacetValue[] {
-  const base = applyFilters(rows, f, { exclude: key })
-  const selected = new Set(f.facets[key] ?? [])
-  const counts = new Map<string, number>()
-  for (const r of base) {
-    const raw = r[key]
-    const v = raw == null || raw === '' ? '(blank)' : String(raw)
-    counts.set(v, (counts.get(v) ?? 0) + 1)
-  }
-  // Selected values always appear, even at count 0, so they stay un-selectable-away.
-  for (const v of selected) if (!counts.has(v)) counts.set(v, 0)
-
-  return [...counts.entries()]
-    .map(([value, count]) => ({ value, count, selected: selected.has(value) }))
-    .sort((a, b) => (b.count - a.count) || a.value.localeCompare(b.value))
-    .slice(0, limit)
+  return facetValuesMany(rows, f, [key], limit).get(key) ?? []
 }
 
 export function toggleFacet(f: FilterState, key: string, value: string): FilterState {
