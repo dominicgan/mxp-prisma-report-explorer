@@ -10,16 +10,8 @@ import {
   SEVERITY_CONFIG,
 } from '@/components/ui/chart'
 import { num, pct, shortRepo } from '@/lib/format'
-import type { Finding } from '@/lib/parse'
 import { SEVERITY_ORDER } from '@/lib/schema'
-import {
-  ageBreakdown,
-  countBy,
-  discoveryTrend,
-  exploitPatchMatrix,
-  severityBreakdown,
-  stackedBySeverity,
-} from '@/lib/stats'
+import type { Bucket, Matrix2x2, StackedRow } from '@/lib/stats'
 import { cn } from '@/lib/utils'
 
 const SEV_KEYS = [...SEVERITY_ORDER]
@@ -72,8 +64,8 @@ function EmptyPlot({ height = 220 }: { height?: number }) {
 }
 
 /** Severity split. Donut, because this is a part-to-whole with few slices. */
-export function SeverityChart({ rows, onSelect }: { rows: Finding[]; onSelect?: (sev: string) => void }) {
-  const data = severityBreakdown(rows).filter((d) => d.count > 0)
+export function SeverityChart({ data: input, onSelect }: { data: Bucket[]; onSelect?: (sev: string) => void }) {
+  const data = input.filter((d) => d.count > 0)
   const total = data.reduce((a, b) => a + b.count, 0)
   const present = data.map((d) => d.key)
 
@@ -132,14 +124,15 @@ export function SeverityChart({ rows, onSelect }: { rows: Finding[]; onSelect?: 
 
 /** The triage 2x2: exploitable vs patchable. */
 export function TriageMatrix({
-  rows,
+  matrix,
+  total,
   onSelect,
 }: {
-  rows: Finding[]
+  matrix: Matrix2x2
+  total: number
   onSelect?: (exploitable: string, patchable: string) => void
 }) {
-  const { cells, axes } = exploitPatchMatrix(rows)
-  const total = rows.length
+  const { cells, axes } = matrix
   const max = Math.max(1, ...cells.map((c) => c.count))
 
   const cellAt = (e: string, p: string) => cells.find((c) => c.exploitable === e && c.patchable === p)?.count ?? 0
@@ -239,8 +232,7 @@ function FragmentRow({
 }
 
 /** Container vs code, split by severity. */
-export function SurfaceChart({ rows }: { rows: Finding[] }) {
-  const data = stackedBySeverity(rows, 'surface', 4)
+export function SurfaceChart({ data }: { data: StackedRow[] }) {
   const present = SEV_KEYS.filter((k) => data.some((d) => (d[k as keyof typeof d] as number) > 0))
 
   return (
@@ -276,8 +268,8 @@ export function SurfaceChart({ rows }: { rows: Finding[] }) {
 }
 
 /** Top repos by finding count, split by severity. */
-export function RepoChart({ rows, onSelect }: { rows: Finding[]; onSelect?: (repo: string) => void }) {
-  const data = stackedBySeverity(rows, 'repo', 12).map((d) => ({ ...d, short: shortRepo(d.key) }))
+export function RepoChart({ data: input, onSelect }: { data: StackedRow[]; onSelect?: (repo: string) => void }) {
+  const data = input.map((d) => ({ ...d, short: shortRepo(d.key) }))
   // Repo names run long; truncate the tick so it cannot overflow the gutter.
   const tick = (v: string) => (v.length > 26 ? `${v.slice(0, 25)}\u2026` : v)
   const present = SEV_KEYS.filter((k) => data.some((d) => (d[k as keyof typeof d] as number) > 0))
@@ -326,16 +318,14 @@ export function RepoChart({ rows, onSelect }: { rows: Finding[]; onSelect?: (rep
 
 /** A single-series count bar over an arbitrary dimension. */
 export function DimensionChart({
-  rows,
-  dimension,
+  data: input,
   title,
   description,
   onSelect,
   height = 200,
   topN = 10,
 }: {
-  rows: Finding[]
-  dimension: string
+  data: Bucket[]
   title: string
   description?: string
   onSelect?: (value: string) => void
@@ -344,7 +334,7 @@ export function DimensionChart({
 }) {
   // The tail folds into "Other" rather than being dropped, so the bars still
   // add up to the filtered total.
-  const data = foldToSlots(countBy(rows, dimension), topN)
+  const data = foldToSlots(input, topN)
   // One measure, one colour: the category is already named on the y-axis, so
   // giving each bar its own hue would encode nothing.
   const config = { count: { label: 'Findings', color: 'var(--chart-1)' } }
@@ -384,8 +374,7 @@ export function DimensionChart({
 }
 
 /** How long findings have been open. Ordered buckets, single measure. */
-export function AgeChart({ rows }: { rows: Finding[] }) {
-  const data = ageBreakdown(rows)
+export function AgeChart({ data }: { data: Bucket[] }) {
   const hasData = data.some((d) => d.count > 0)
 
   return (
@@ -408,8 +397,7 @@ export function AgeChart({ rows }: { rows: Finding[] }) {
 }
 
 /** Discovery over time. Only meaningful once the export spans several days. */
-export function TrendChart({ rows }: { rows: Finding[] }) {
-  const data = discoveryTrend(rows)
+export function TrendChart({ data }: { data: { date: string; count: number; cumulative: number }[] }) {
 
   return (
     <ChartCard title="Discovery timeline" description="Findings by the date Prisma first saw them">

@@ -143,6 +143,20 @@ What changed:
   scan per facet — five open facets over 91k rows measured **344ms** per filter
   change. One pass with a per-row fail-count does the same work in **70ms**, with
   byte-identical output.
+- **Columnar, dictionary-encoded index** (`columnar.ts`). Filtering, facet
+  counting and every Overview tally now run as integer comparisons and histograms
+  over typed arrays rather than scans over 91k row objects. One filter change
+  went from **373ms to 15ms**.
+
+  This works because of the shape of the data: a 30MB export carries 4.5M cell
+  references but only **~5,500 distinct strings**, so every column encodes
+  tightly (the whole index is 17MB) and a free-text search resolves against a few
+  thousand dictionary entries instead of 91k rows.
+- **Deferred heavy panes.** The sidebar and the headline count update from the
+  live filter state; the grids and the ten charts read a `useDeferredValue` copy.
+  Clicking a facet checkbox now blocks the main thread for **0–1ms** — React
+  paints the checkbox first and catches the panes up after, dimming them briefly
+  so the lag is legible rather than mysterious.
 - **Debounce fix.** The facet panel was counting against the *undebounced* filter
   state, so every keystroke in the search box triggered those scans while the
   grid and charts correctly waited.
@@ -153,12 +167,26 @@ therefore **not** done:
 - *Reading only the chosen sheet is a big win.* It is not: `sheets: ['Export']`
   saved 0.1s, because the other tab is small and the cost is inflating the data
   sheet itself. Kept anyway — it bounds peak memory — but it is not the lever.
-- *Collapsing the ~12 chart tally passes.* All of them together take **19ms** on
-  the filtered set. Not worth the loss of clarity.
+- *Collapsing the ~12 chart tally passes.* Measured at **19ms** — and that call
+  turned out to be wrong, because it was measured on an 8.7k-row *filtered*
+  subset. On a filter that keeps most of the report those same passes cost
+  **~340ms**, and they were the single biggest cause of the click lag. Measure at
+  the scale the user actually hits.
 
-Columnar storage / DuckDB-WASM were also left alone: the argument for them was
-that returning rows from a worker would be too slow, but structured-cloning all
-91,578 rows measures **0.9s**, so that argument does not hold here.
+DuckDB-WASM was considered and not used. It fixes the same two things the
+columnar index below fixes, but it cannot read `.xlsx` — SheetJS would still do
+the decoding, which is the dominant *load* cost — and getting its memory benefit
+would mean moving the grid to a server-side row model and rewriting the filter
+and stats layers as SQL. The columnar index buys the interaction win for a
+fraction of that, with no new dependency.
+
+The row-object implementations in `filters.ts` and `stats.ts` are kept as the
+readable reference, and `npm run verify:columnar` asserts the fast path still
+agrees with them across 16 filter shapes:
+
+```bash
+npm run verify:columnar -- path/to/real-export.xlsx
+```
 
 ### Known ceiling
 
@@ -264,6 +292,9 @@ src/
   lib/
     schema.ts     canonical fields + header aliases
     parse.ts      workbook -> findings, sheet inspection, fingerprint
+    columnar.ts   dictionary-encoded column index
+    filters-columnar.ts  fast row selection + facet counting
+    stats-columnar.ts    every Overview tally in one pass
     parse.worker.ts  parsing off the main thread
     parse-client.ts  main-thread handle on the worker
     report-cache.ts  parsed reports cached in IndexedDB (chunked)

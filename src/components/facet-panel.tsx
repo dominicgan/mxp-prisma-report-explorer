@@ -6,8 +6,9 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { num } from '@/lib/format'
-import { clearFacet, facetValuesMany, toggleFacet, type FacetValue, type FilterState } from '@/lib/filters'
-import type { Finding } from '@/lib/parse'
+import { clearFacet, toggleFacet, type FacetValue, type FilterState } from '@/lib/filters'
+import type { ColumnStore } from '@/lib/columnar'
+import { facetCounts } from '@/lib/filters-columnar'
 import { FIELD_BY_KEY } from '@/lib/schema'
 import { cn } from '@/lib/utils'
 
@@ -42,13 +43,14 @@ function labelFor(key: string) {
 const DEFAULT_OPEN = new Set(['exploitable', 'patchable', 'surface', 'repo', 'severity'])
 
 export function FacetPanel({
-  rows,
+  store,
   filters,
   countBasis,
   setFilters,
   availableKeys,
 }: {
-  rows: Finding[]
+  /** Columnar index the facet counts are computed against. */
+  store: ColumnStore | null
   /** Live state - drives checkbox state and every mutation. */
   filters: FilterState
   /**
@@ -81,9 +83,9 @@ export function FacetPanel({
   // One pass over the rows for every open facet at once, rather than one full
   // scan each.
   const facetData = useMemo(
-    () => facetValuesMany(rows, countBasis, openKeys),
+    () => (store ? facetCounts(store, countBasis, openKeys) : new Map<string, FacetValue[]>()),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, countBasis, openKeySig],
+    [store, countBasis, openKeySig],
   )
 
   return (

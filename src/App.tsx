@@ -1,6 +1,6 @@
 import type { GridApi } from 'ag-grid-community'
 import { PanelLeftIcon } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useDeferredValue, useMemo, useState } from 'react'
 import {
   AgeChart,
   DimensionChart,
@@ -24,12 +24,14 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { UploadZone } from '@/components/upload-zone'
-import { useEffectiveFilters, useFilteredRows, useFilters, useReport } from '@/hooks/use-report'
+import { useColumnStore, useEffectiveFilters, useFilteredRows, useFilters, useReport } from '@/hooks/use-report'
+import { cn } from '@/lib/utils'
 import { DEFAULT_CVE_SOURCE } from '@/lib/cve'
 import { setFacet, toggleFacet } from '@/lib/filters'
 import type { Finding } from '@/lib/parse'
 import { bestSheet } from '@/lib/parse'
-import { computeKpis } from '@/lib/stats'
+import { selectIndices } from '@/lib/filters-columnar'
+import { overviewStats } from '@/lib/stats-columnar'
 
 const SAMPLE_URL = `${import.meta.env.BASE_URL}samples/prisma-sample-dump.xlsx`
 
@@ -51,8 +53,37 @@ function Explorer() {
 
   const rows = report.rows
   const effective = useEffectiveFilters(filters)
-  const filtered = useFilteredRows(rows, effective)
-  const kpis = useMemo(() => computeKpis(filtered), [filtered])
+  const store = useColumnStore(rows)
+
+  // Checking a facet updates the sidebar from `effective` immediately (a few
+  // milliseconds of integer work), while the expensive consumers - the grids
+  // and the ten Overview charts - read this deferred copy. React paints the
+  // checkbox first and catches them up afterwards, so a click never feels
+  // stuck even on a 91k-row report.
+  const heavy = useDeferredValue(effective)
+  const stale = heavy !== effective
+
+  // The headline count comes from the *live* filter state: selecting indices is
+  // ~0.5ms even over 91k rows, so there is no reason to make the number wait
+  // for the charts.
+  const shownCount = useMemo(
+    () => (store ? selectIndices(store, effective).length : rows.length),
+    [store, effective, rows.length],
+  )
+
+  const filtered = useFilteredRows(rows, store, heavy)
+  const DIMENSIONS = useMemo(
+    () => ['environment', 'facing', 'packageName', 'namespace', 'serviceOwner'],
+    [],
+  )
+  const overview = useMemo(
+    () => (store ? overviewStats(store, selectIndices(store, heavy), DIMENSIONS) : null),
+    [store, heavy, DIMENSIONS],
+  )
+  const kpis = useMemo(
+    () => overview?.kpis ?? { findings: 0, critical: 0, high: 0, exploitable: 0, actionable: 0, noPatch: 0, cves: 0, repos: 0, container: 0, code: 0, prodExternal: 0, breachedKpi: 0, oldestDays: undefined },
+    [overview],
+  )
 
   /** Which facet keys this particular export actually has values for. */
   const availableKeys = useMemo(() => {
@@ -139,7 +170,7 @@ function Explorer() {
         setFilters={setFilters}
         clearAll={clearAll}
         total={rows.length}
-        shown={filtered.length}
+        shown={shownCount}
         meta={meta}
         cveSource={cveSource}
         setCveSource={setCveSource}
@@ -154,7 +185,7 @@ function Explorer() {
       <div className="flex min-h-0 flex-1">
         <ResizableSidebar open={sidebarOpen} className="bg-card/40 border-r">
           <FacetPanel
-            rows={rows}
+            store={store}
             filters={filters}
             countBasis={effective}
             setFilters={setFilters}
@@ -163,7 +194,15 @@ function Explorer() {
         </ResizableSidebar>
 
         <main className="flex min-w-0 flex-1 flex-col">
-          <Tabs value={tab} onValueChange={changeTab} className="flex min-h-0 flex-1 flex-col gap-0">
+          <Tabs
+            value={tab}
+            onValueChange={changeTab}
+            className={cn(
+              'flex min-h-0 flex-1 flex-col gap-0 transition-opacity',
+              // The sidebar has already updated; this pane is a beat behind.
+              stale && 'pointer-events-none opacity-60',
+            )}
+          >
             <div className="flex items-center gap-2 border-b px-3 py-1.5">
               <Button
                 variant="ghost"
@@ -186,9 +225,10 @@ function Explorer() {
                 <div className="space-y-3 p-3">
                   <KpiCards kpis={kpis} actions={kpiActions} />
                   <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
-                    <SeverityChart rows={filtered} onSelect={(s) => only('severity', s)} />
+                    <SeverityChart data={overview?.severity ?? []} onSelect={(s) => only('severity', s)} />
                     <TriageMatrix
-                      rows={filtered}
+                      matrix={overview?.matrix ?? { cells: [], axes: { exploitable: [], patchable: [] } }}
+                      total={filtered.length}
                       onSelect={(e, p) =>
                         setFilters({
                           ...filters,
@@ -196,12 +236,11 @@ function Explorer() {
                         })
                       }
                     />
-                    <SurfaceChart rows={filtered} />
-                    <RepoChart rows={filtered} onSelect={(r) => toggle('repo', r)} />
+                    <SurfaceChart data={overview?.surface ?? []} />
+                    <RepoChart data={overview?.repo ?? []} onSelect={(r) => toggle('repo', r)} />
                     <div className="grid gap-3">
                       <DimensionChart
-                        rows={filtered}
-                        dimension="environment"
+                        data={overview?.dimensions['environment'] ?? []}
                         title="Environment"
                         description="Where the affected images are running"
                         onSelect={(v) => toggle('environment', v)}
@@ -209,8 +248,7 @@ function Explorer() {
                         topN={5}
                       />
                       <DimensionChart
-                        rows={filtered}
-                        dimension="facing"
+                        data={overview?.dimensions['facing'] ?? []}
                         title="Exposure"
                         description="Internal vs internet-facing"
                         onSelect={(v) => toggle('facing', v)}
@@ -219,28 +257,25 @@ function Explorer() {
                       />
                     </div>
                     <div className="grid gap-3">
-                      <AgeChart rows={filtered} />
-                      <TrendChart rows={filtered} />
+                      <AgeChart data={overview?.age ?? []} />
+                      <TrendChart data={overview?.trend ?? []} />
                     </div>
                     <DimensionChart
-                      rows={filtered}
-                      dimension="packageName"
+                      data={overview?.dimensions['packageName'] ?? []}
                       title="Top packages"
                       description="Which dependency shows up most"
                       onSelect={(v) => toggle('packageName', v)}
                       height={220}
                     />
                     <DimensionChart
-                      rows={filtered}
-                      dimension="namespace"
+                      data={overview?.dimensions['namespace'] ?? []}
                       title="Namespaces"
                       description="Cluster namespaces carrying findings"
                       onSelect={(v) => toggle('namespace', v)}
                       height={220}
                     />
                     <DimensionChart
-                      rows={filtered}
-                      dimension="serviceOwner"
+                      data={overview?.dimensions['serviceOwner'] ?? []}
                       title="Service owners"
                       description="Who to route remediation to"
                       onSelect={(v) => toggle('serviceOwner', v)}
