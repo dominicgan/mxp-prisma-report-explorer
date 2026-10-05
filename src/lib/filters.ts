@@ -24,7 +24,7 @@ export const EMPTY_FILTERS: FilterState = { q: '', facets: {}, cveOnly: false }
 
 /** Fields free-text search looks at. Kept small so search stays fast on 10k+ rows. */
 const SEARCH_KEYS = [
-  'cve', 'bulletin', 'repo', 'tag', 'packageName', 'packageVersion', 'packagePath',
+  'cve', 'bulletin', 'repo', 'tag', 'tagStream', 'packageName', 'packageVersion', 'packagePath',
   'purl', 'namespace', 'cluster', 'hostName', 'serviceName', 'description',
   'imageId', 'digestId', 'ciNumber', 'serviceOwner', 'status',
 ]

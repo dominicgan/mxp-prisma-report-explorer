@@ -43,7 +43,7 @@ export const FIELDS: FieldDef[] = [
   // --- Location ----------------------------------------------------------
   { key: 'repo', label: 'Repo', kind: 'enum', aliases: ['repo', 'repository', 'image repo'], facet: true, primary: true, group: 'Location' },
   { key: 'registry', label: 'Registry', kind: 'enum', aliases: ['registry'], facet: true, group: 'Location' },
-  { key: 'tag', label: 'Tag', kind: 'string', aliases: ['tag', 'image tag'], primary: true, group: 'Location' },
+  { key: 'tag', label: 'Tag', kind: 'string', aliases: ['tag', 'image tag'], facet: true, primary: true, group: 'Location' },
   { key: 'imageId', label: 'Image ID', kind: 'string', aliases: ['image id', 'imageid'], group: 'Location' },
   { key: 'digestId', label: 'Digest', kind: 'string', aliases: ['digestid', 'digest id', 'digest'], group: 'Location' },
   { key: 'distro', label: 'Distro', kind: 'enum', aliases: ['distro', 'distribution'], facet: true, group: 'Location' },
@@ -133,7 +133,19 @@ export const DERIVED: DerivedDef[] = [
   { key: 'triage', label: 'Triage Class' },
   { key: 'ageDays', label: 'Age (days)' },
   { key: 'ageBucket', label: 'Age Bucket' },
+  // Parsed out of the image tag; see `parseTag`.
+  { key: 'tagStream', label: 'Tag Stream' },
+  { key: 'tagVersion', label: 'Tag Version' },
+  { key: 'tagBuild', label: 'Build Number' },
+  { key: 'tagBuiltAt', label: 'Image Built' },
+  { key: 'imageAgeDays', label: 'Image Age (days)' },
+  { key: 'imageAgeBucket', label: 'Image Age' },
 ]
+
+/** Derived keys that hold dates, so the columnar index types them correctly. */
+export const DERIVED_DATE_KEYS = ['tagBuiltAt']
+/** Derived keys that hold numbers. */
+export const DERIVED_NUMBER_KEYS = ['ageDays', 'tagBuild', 'imageAgeDays']
 
 export const SEVERITY_ORDER = ['Critical', 'High', 'Medium', 'Low', 'Unknown'] as const
 export type Severity = (typeof SEVERITY_ORDER)[number]

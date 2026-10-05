@@ -104,6 +104,38 @@ export function FindingDetail({
               </section>
             )}
 
+            {Boolean(finding.tagStream) && (
+              <section>
+                <h3 className="mb-1 text-xs font-semibold">Image tag</h3>
+                <div className="divide-border/60 divide-y">
+                  <Row label="Branch / stream">
+                    {onFilterBy ? (
+                      <button
+                        type="button"
+                        onClick={() => onFilterBy('tagStream', String(finding.tagStream))}
+                        className="text-left underline decoration-dotted underline-offset-2 hover:decoration-solid"
+                        title={`Filter to everything built from ${finding.tagStream}`}
+                      >
+                        {String(finding.tagStream)}
+                      </button>
+                    ) : (
+                      String(finding.tagStream)
+                    )}
+                  </Row>
+                  {Boolean(finding.tagVersion) && <Row label="Version">{String(finding.tagVersion)}</Row>}
+                  {finding.tagBuild != null && <Row label="Build number">{String(finding.tagBuild)}</Row>}
+                  {Boolean(finding.tagBuiltAt) && (
+                    <Row label="Image built">
+                      {dateTime(finding.tagBuiltAt)}
+                      {finding.imageAgeDays != null && (
+                        <span className="text-muted-foreground"> ({String(finding.imageAgeDays)} days ago)</span>
+                      )}
+                    </Row>
+                  )}
+                </div>
+              </section>
+            )}
+
             <section>
               <h3 className="mb-1 text-xs font-semibold">Why this surface</h3>
               <p className="text-muted-foreground text-xs">{String(finding.surfaceReason ?? 'Not classified')}</p>

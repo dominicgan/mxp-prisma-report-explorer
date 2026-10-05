@@ -1,5 +1,5 @@
 import type { Finding } from './parse'
-import { FIELDS } from './schema'
+import { DERIVED_DATE_KEYS, DERIVED_NUMBER_KEYS, FIELDS } from './schema'
 
 /**
  * Columnar, dictionary-encoded index over the parsed rows.
@@ -52,13 +52,16 @@ function storedValue(display: string): string {
   return display === BLANK ? '' : display
 }
 
-/** Derived columns the schema doesn't describe. */
-const DERIVED_DICT = ['surface', 'exploitable', 'patchable', 'triage', 'ageBucket']
-const DERIVED_NUM = ['ageDays']
+/** Derived columns the schema doesn't describe as sheet fields. */
+const DERIVED_DICT = [
+  'surface', 'exploitable', 'patchable', 'triage', 'ageBucket',
+  'tagStream', 'tagVersion', 'imageAgeBucket',
+]
+const DERIVED_NUM = [...DERIVED_NUMBER_KEYS, ...DERIVED_DATE_KEYS]
 
 /** Kept in step with the old row-scan implementation's search coverage. */
 const SEARCH_KEYS = [
-  'cve', 'bulletin', 'repo', 'tag', 'packageName', 'packageVersion', 'packagePath',
+  'cve', 'bulletin', 'repo', 'tag', 'tagStream', 'packageName', 'packageVersion', 'packagePath',
   'purl', 'namespace', 'cluster', 'hostName', 'serviceName', 'description',
   'imageId', 'digestId', 'ciNumber', 'serviceOwner', 'status',
 ]
@@ -98,7 +101,7 @@ export function buildStore(rows: Finding[]): ColumnStore {
     columns[key] = { kind: 'dict', dict, codes: toCodes(codes, dict.length) }
   }
 
-  const isDate = new Set(FIELDS.filter((f) => f.kind === 'date').map((f) => f.key))
+  const isDate = new Set([...FIELDS.filter((f) => f.kind === 'date').map((f) => f.key), ...DERIVED_DATE_KEYS])
   for (const key of numKeys) {
     const values = new Float64Array(rowCount)
     const dateCol = isDate.has(key)

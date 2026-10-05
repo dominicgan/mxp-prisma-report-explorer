@@ -218,6 +218,30 @@ These are computed, never read from the sheet:
 | **Exploitable / Patchable** | Strict tri-state (`Yes` / `No` / `Unknown`) parsed from `Is Exploitable` / `Is Patchable`. Blank stays `Unknown` rather than being guessed as `No`. |
 | **Triage class** | The exploitable × patchable cross-product. |
 | **Age** | Days since `Discovered`, plus an ordered bucket (0-7d … 180d+). |
+| **Tag structure** | Image tags from this pipeline are structured, so they are decomposed into branch/stream, version, build number and build timestamp. |
+| **Image age** | Days since the image was *built* (from the tag's timestamp) — distinct from how long the finding has been open. |
+
+### Filtering by image tag
+
+Raw tags are filterable, but on a real export there are 333 distinct ones, so
+they are also decomposed:
+
+```
+246-MYEXP-PHASE1-SIT-20260917-1-2026-09-17-11-40
+|   |                           `- built at        -> Image age
+|   `- stream (run counter stripped)               -> Branch / stream
+`- build number
+
+9-develop-1.0.0-2026-07-15-09-27   -> stream "develop", version "1.0.0"
+```
+
+That collapses 333 tags into **22 streams**, which is a usable facet:
+`MYEXP-PHASE1-SIT` (51,854 findings), `release-main` (15,088), `release`
+(12,596), `develop` (5,214), and a long tail of feature branches.
+
+Tags that do not match the pattern (`latest`, `curl`, `alpine`) keep the whole
+tag as their stream rather than being dropped — verified across all 91,578 rows
+that no tag loses its identity and no build timestamp parses to a nonsense date.
 
 ## Views
 

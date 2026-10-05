@@ -43,6 +43,9 @@ const DERIVED_LABELS: Record<string, string> = {
   patchable: 'Patchable',
   triage: 'Triage class',
   ageBucket: 'Age',
+  tagStream: 'Branch / stream',
+  tagVersion: 'Version',
+  imageAgeBucket: 'Image age',
 }
 
 function labelFor(key: string) {

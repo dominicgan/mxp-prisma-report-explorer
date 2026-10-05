@@ -226,6 +226,72 @@ export function triageClass(exploitable: string, patchable: string): Triage {
   return patchable === 'Yes' ? 'Not Exploitable, Patchable' : 'Not Exploitable, No Patch'
 }
 
+/**
+ * Image tags from this pipeline are structured, and the structure is more
+ * filterable than the whole string. Across a real export, 321 of 333 distinct
+ * tags carry a leading build number and a trailing build timestamp:
+ *
+ *   246-MYEXP-PHASE1-SIT-20260917-1-2026-09-17-11-40
+ *   |   |                           `- built at
+ *   |   `- stream (the dated run counter is stripped)
+ *   `- build number
+ *
+ *   9-develop-1.0.0-2026-07-15-09-27   -> stream "develop", version "1.0.0"
+ *
+ * Anything that does not match (`latest`, `curl`, `alpine`) keeps the whole tag
+ * as its stream rather than being discarded.
+ */
+export interface TagParts {
+  stream: string
+  version: string
+  build: number | undefined
+  builtAt: string | undefined
+}
+
+const TAG_BUILD = /^(\d+)-(.*)$/
+const TAG_TIMESTAMP = /^(.*)-(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})$/
+const TAG_VERSION = /-(\d+\.\d+(?:\.\d+)?[\w.-]*)$/
+/** The `-20260917-1` run counter inside the SIT pipeline's tags. */
+const TAG_RUN = /^(.*)-(\d{8})-(\d+)$/
+
+export function parseTag(raw: string): TagParts {
+  const tag = raw.trim()
+  if (!tag) return { stream: '', version: '', build: undefined, builtAt: undefined }
+
+  let rest = tag
+  let build: number | undefined
+  const b = TAG_BUILD.exec(rest)
+  if (b) {
+    build = Number(b[1])
+    rest = b[2]
+  }
+
+  let builtAt: string | undefined
+  const ts = TAG_TIMESTAMP.exec(rest)
+  if (ts) {
+    const t = Date.UTC(Number(ts[2]), Number(ts[3]) - 1, Number(ts[4]), Number(ts[5]), Number(ts[6]))
+    if (!Number.isNaN(t)) {
+      builtAt = new Date(t).toISOString()
+      rest = ts[1]
+    }
+  }
+
+  let version = ''
+  const v = TAG_VERSION.exec(rest)
+  if (v) {
+    version = v[1]
+    rest = rest.slice(0, rest.length - v[0].length)
+  }
+
+  const run = TAG_RUN.exec(rest)
+  if (run) rest = run[1]
+
+  return { stream: rest || tag, version, build, builtAt }
+}
+
+/** How long ago the image itself was built - distinct from finding age. */
+export const IMAGE_AGE_ORDER = ['0-7d', '8-30d', '31-90d', '91-180d', '180d+', 'Unknown']
+
 export const AGE_BUCKET_ORDER = ['0-7d', '8-30d', '31-90d', '91-180d', '180d+', 'Unknown']
 
 export function ageBucketOf(days: number | undefined): string {
@@ -486,6 +552,17 @@ export function parseSheet(
     const ageDays = disc ? Math.max(0, Math.floor((now.getTime() - Date.parse(disc)) / MS_PER_DAY)) : undefined
     rec.ageDays = ageDays
     rec.ageBucket = ageBucketOf(ageDays)
+
+    const tagParts = parseTag(coerceString(rec.tag))
+    rec.tagStream = tagParts.stream
+    rec.tagVersion = tagParts.version
+    rec.tagBuild = tagParts.build
+    rec.tagBuiltAt = tagParts.builtAt
+    const imageAgeDays = tagParts.builtAt
+      ? Math.max(0, Math.floor((now.getTime() - Date.parse(tagParts.builtAt)) / MS_PER_DAY))
+      : undefined
+    rec.imageAgeDays = imageAgeDays
+    rec.imageAgeBucket = ageBucketOf(imageAgeDays)
 
     // Identity: what makes this finding *this* finding. Row index is the last
     // resort so genuinely duplicated lines still get distinct, stable ids.

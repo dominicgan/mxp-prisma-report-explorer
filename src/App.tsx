@@ -31,6 +31,7 @@ import { setFacet, toggleFacet } from '@/lib/filters'
 import type { Finding } from '@/lib/parse'
 import { bestSheet } from '@/lib/parse'
 import { selectIndices } from '@/lib/filters-columnar'
+import { DERIVED } from '@/lib/schema'
 import { overviewStats } from '@/lib/stats-columnar'
 
 const SAMPLE_URL = `${import.meta.env.BASE_URL}samples/prisma-sample-dump.xlsx`
@@ -88,7 +89,9 @@ function Explorer() {
   /** Which facet keys this particular export actually has values for. */
   const availableKeys = useMemo(() => {
     const keys = new Set<string>(report.meta?.presentKeys ?? [])
-    for (const k of ['surface', 'exploitable', 'patchable', 'triage', 'ageBucket']) keys.add(k)
+    // Derived fields are not sheet columns, so take them from the schema rather
+    // than a list here that silently goes stale when a new one is added.
+    for (const d of DERIVED) keys.add(d.key)
     // Drop facets where every row is blank - an empty facet is just noise.
     for (const k of [...keys]) {
       if (!rows.some((r) => r[k] != null && r[k] !== '')) keys.delete(k)

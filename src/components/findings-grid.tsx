@@ -148,6 +148,13 @@ const SECONDARY: ColDef<Finding>[] = FIELDS.filter((f) => !PRIMARY_KEYS.has(f.ke
 const EXTRA: ColDef<Finding>[] = [
   { field: 'triage', headerName: 'Triage Class', width: 190, hide: true, ...setish },
   { field: 'ageBucket', headerName: 'Age Bucket', width: 120, hide: true, ...setish },
+  // Parsed out of the image tag.
+  { field: 'tagStream', headerName: 'Branch / stream', width: 190, hide: true, ...setish },
+  { field: 'tagVersion', headerName: 'Tag Version', width: 130, hide: true, ...setish },
+  { field: 'tagBuild', headerName: 'Build #', width: 100, hide: true, type: 'numericColumn', ...numFilter },
+  { field: 'tagBuiltAt', headerName: 'Image Built', width: 130, hide: true, valueFormatter: dateFormatter, ...textFilter },
+  { field: 'imageAgeDays', headerName: 'Image Age (d)', width: 125, hide: true, type: 'numericColumn', ...numFilter },
+  { field: 'imageAgeBucket', headerName: 'Image Age', width: 120, hide: true, ...setish },
   { field: 'surfaceReason', headerName: 'Why this surface', width: 260, hide: true, ...textFilter },
   { field: 'rowIndex', headerName: 'Sheet row', width: 100, hide: true, type: 'numericColumn', ...numFilter },
 ]

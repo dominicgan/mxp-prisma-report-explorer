@@ -20,6 +20,7 @@ const FACET_GROUPS: { title: string; keys: string[] }[] = [
   { title: 'Triage', keys: ['exploitable', 'patchable', 'severity', 'triage', 'kpiStatus'] },
   { title: 'Surface', keys: ['surface', 'vulnerabilityCategory', 'packageType'] },
   { title: 'Location', keys: ['repo', 'namespace', 'environment', 'cluster', 'facing', 'ciStatus', 'distro', 'hostName', 'registry'] },
+  { title: 'Image', keys: ['tagStream', 'tagVersion', 'tag', 'imageAgeBucket'] },
   { title: 'Package', keys: ['packageName', 'packageLicense'] },
   { title: 'Identifier', keys: ['cve', 'cvssSource'] },
   { title: 'Lifecycle', keys: ['ageBucket'] },
@@ -33,6 +34,10 @@ const DERIVED_LABELS: Record<string, string> = {
   patchable: 'Patchable',
   triage: 'Triage class',
   ageBucket: 'Age',
+  tagStream: 'Branch / stream',
+  tagVersion: 'Version',
+  tag: 'Tag (full)',
+  imageAgeBucket: 'Image age',
 }
 
 function labelFor(key: string) {
