@@ -67,6 +67,9 @@ const cases: [string, FilterState][] = [
   ['cveOnly + facet', { ...EMPTY_FILTERS, cveOnly: true, facets: { severity: someSev } }],
   ['blank facet value', { ...EMPTY_FILTERS, facets: { distro: ['(blank)'] } }],
   ['unsatisfiable facet', { ...EMPTY_FILTERS, facets: { severity: ['NoSuchSeverity'] } }],
+  ['all images (history)', { ...EMPTY_FILTERS, latestOnly: false }],
+  ['all images + facet', { ...EMPTY_FILTERS, latestOnly: false, facets: { severity: someSev } }],
+  ['latest + text', { ...EMPTY_FILTERS, latestOnly: true, q: 'netty' }],
 ]
 
 const J = (x: unknown) => JSON.stringify(x)

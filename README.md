@@ -221,6 +221,32 @@ These are computed, never read from the sheet:
 | **Tag structure** | Image tags from this pipeline are structured, so they are decomposed into branch/stream, version, build number and build timestamp. |
 | **Image age** | Days since the image was *built* (from the tag's timestamp) — distinct from how long the finding has been open. |
 
+### Latest images only
+
+A scan export accumulates **every image it has ever seen**, so a repo carries a
+dozen old builds alongside the current one, and findings that were fixed builds
+ago still inflate every count. On a real export that is most of the data:
+
+| View | Findings | "Fix first" queue |
+|---|---|---|
+| Latest images only *(default)* | 35,238 | 266 |
+| Every image in the export | 91,578 | 770 |
+
+The **Latest images only** switch in the top bar is on by default. Turn it off to
+see history — the switch is tinted when it is off, because every number on screen
+then includes findings that may already be fixed.
+
+"Latest" is per **(repo, branch)**, not per repo: 31 of 45 repos build several
+streams at once (`release`, `release-main`, `develop`, the SIT pipeline), and
+collapsing to one image per repo would hide whole active branches. Recency comes
+from the build timestamp in the tag, falling back to the build number on a tie.
+
+Where a whole (repo, branch) group has no parseable timestamp — `latest`, `curl`,
+`alpine` — every row is kept rather than picking one arbitrarily.
+
+The default is not encoded in the URL, so a shared link stays clean; turning the
+switch off records `#allImages=1`.
+
 ### Filtering by image tag
 
 Raw tags are filterable, but on a real export there are 333 distinct ones, so

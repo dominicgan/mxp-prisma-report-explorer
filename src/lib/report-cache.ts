@@ -22,7 +22,7 @@ const STORE = 'reports'
 const DB_VERSION = 1
 
 /** Derived fields and schema changes invalidate cached rows. */
-export const CACHE_VERSION = 4
+export const CACHE_VERSION = 5
 
 /** Keep the cache bounded; these entries run to hundreds of MB each. */
 const MAX_ENTRIES = 3

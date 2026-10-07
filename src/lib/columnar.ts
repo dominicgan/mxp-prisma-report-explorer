@@ -55,7 +55,7 @@ function storedValue(display: string): string {
 /** Derived columns the schema doesn't describe as sheet fields. */
 const DERIVED_DICT = [
   'surface', 'exploitable', 'patchable', 'triage', 'ageBucket',
-  'tagStream', 'tagVersion', 'imageAgeBucket',
+  'tagStream', 'tagVersion', 'imageAgeBucket', 'isLatestImage',
 ]
 const DERIVED_NUM = [...DERIVED_NUMBER_KEYS, ...DERIVED_DATE_KEYS]
 

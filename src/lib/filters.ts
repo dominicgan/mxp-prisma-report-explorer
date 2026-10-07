@@ -18,9 +18,16 @@ export interface FilterState {
   discoveredTo?: string
   /** Only rows that carry a CVE identifier. */
   cveOnly: boolean
+  /**
+   * Show only the newest image in each (repo, branch) pair.
+   *
+   * On by default: a scan export accumulates every image it has ever seen, so
+   * the unfiltered view double-counts findings that were fixed builds ago.
+   */
+  latestOnly: boolean
 }
 
-export const EMPTY_FILTERS: FilterState = { q: '', facets: {}, cveOnly: false }
+export const EMPTY_FILTERS: FilterState = { q: '', facets: {}, cveOnly: false, latestOnly: true }
 
 /** Fields free-text search looks at. Kept small so search stays fast on 10k+ rows. */
 const SEARCH_KEYS = [
@@ -91,6 +98,7 @@ export function applyFilters(rows: Finding[], f: FilterState, opts?: { exclude?:
 
   return rows.filter((r) => {
     if (f.cveOnly && !r.cve) return false
+    if (f.latestOnly && r.isLatestImage === 'No') return false
 
     for (const [k, set] of facetSets) {
       const v = r[k]
@@ -218,6 +226,7 @@ function passesNonFacet(
   to: number | undefined,
 ): boolean {
   if (f.cveOnly && !r.cve) return false
+  if (f.latestOnly && r.isLatestImage === 'No') return false
 
   if (f.cvssMin != null || f.cvssMax != null) {
     const c = r.cvss as number | undefined
@@ -273,6 +282,8 @@ export function encodeFilters(f: FilterState): string {
   const p = new URLSearchParams()
   if (f.q.trim()) p.set('q', f.q.trim())
   if (f.cveOnly) p.set('cveOnly', '1')
+  // Default is latest-only, so only the opt-out needs recording.
+  if (!f.latestOnly) p.set('allImages', '1')
   if (f.cvssMin != null) p.set('cvssMin', String(f.cvssMin))
   if (f.cvssMax != null) p.set('cvssMax', String(f.cvssMax))
   if (f.discoveredFrom) p.set('from', f.discoveredFrom)
@@ -299,6 +310,7 @@ export function decodeFilters(qs: string): FilterState {
     q: p.get('q') ?? '',
     facets,
     cveOnly: p.get('cveOnly') === '1',
+    latestOnly: p.get('allImages') !== '1',
     cvssMin: num('cvssMin'),
     cvssMax: num('cvssMax'),
     discoveredFrom: p.get('from') ?? undefined,

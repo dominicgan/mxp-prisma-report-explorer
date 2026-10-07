@@ -422,6 +422,65 @@ export function bestSheet(sheets: SheetInfo[]): string | undefined {
   return ranked.find((s) => s.looksLikeReport)?.name ?? ranked[0]?.name
 }
 
+/**
+ * Mark the newest image in each (repo, branch) pair.
+ *
+ * A scan export accumulates every image it has ever seen, so a repo carries a
+ * dozen old builds alongside the current one and their already-fixed findings
+ * inflate every count. "Latest" is taken per *branch*, not per repo: 31 of 45
+ * repos in a real export build several streams at once (release, release-main,
+ * develop, the SIT pipeline), and collapsing to one image per repo would hide
+ * whole active branches.
+ *
+ * Recency comes from the tag's build timestamp, falling back to the build
+ * number when two tags share a timestamp.
+ *
+ * Where a whole group has no parseable timestamp (`latest`, `curl`, `alpine`),
+ * every row is kept: we cannot rank them, and silently showing one arbitrary
+ * image would be worse than showing all of them.
+ */
+export function markLatestImages(rows: Finding[]): void {
+  const SEPK = String.fromCharCode(0)
+  const keyOf = (r: Finding) => `${coerceString(r.repo)}${SEPK}${coerceString(r.tagStream)}`
+
+  interface Best {
+    t: number
+    build: number
+    tag: string
+  }
+  const best = new Map<string, Best>()
+  const rankable = new Set<string>()
+
+  for (const r of rows) {
+    const key = keyOf(r)
+    const builtAt = r.tagBuiltAt as string | undefined
+    const t = builtAt ? Date.parse(builtAt) : Number.NaN
+    const ranked = Number.isFinite(t)
+    if (ranked) rankable.add(key)
+
+    const cand: Best = {
+      t: ranked ? t : Number.NEGATIVE_INFINITY,
+      build: typeof r.tagBuild === 'number' ? r.tagBuild : -1,
+      tag: coerceString(r.tag),
+    }
+    const cur = best.get(key)
+    if (
+      !cur ||
+      cand.t > cur.t ||
+      (cand.t === cur.t && cand.build > cur.build) ||
+      // Final tie-break on the tag itself, so the choice never depends on row order.
+      (cand.t === cur.t && cand.build === cur.build && cand.tag > cur.tag)
+    ) {
+      best.set(key, cand)
+    }
+  }
+
+  for (const r of rows) {
+    const key = keyOf(r)
+    r.isLatestImage = !rankable.has(key) || best.get(key)!.tag === coerceString(r.tag) ? 'Yes' : 'No'
+  }
+}
+
 export function parseSheet(
   wb: XLSX.WorkBook,
   fileName: string,
@@ -578,6 +637,9 @@ export function parseSheet(
 
     rows.push(rec as Finding)
   }
+
+  // Needs every row, so it runs after the loop rather than inside it.
+  markLatestImages(rows)
 
   const findingCount = rows.reduce((a, r) => a + ((r.count as number) || 1), 0)
   const presentKeys = FIELDS.map((f) => f.key).filter((k) => usedKeys.has(k))

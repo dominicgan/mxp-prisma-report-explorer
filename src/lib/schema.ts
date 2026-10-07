@@ -140,6 +140,7 @@ export const DERIVED: DerivedDef[] = [
   { key: 'tagBuiltAt', label: 'Image Built' },
   { key: 'imageAgeDays', label: 'Image Age (days)' },
   { key: 'imageAgeBucket', label: 'Image Age' },
+  { key: 'isLatestImage', label: 'Latest Image' },
 ]
 
 /** Derived keys that hold dates, so the columnar index types them correctly. */

@@ -67,6 +67,12 @@ function Explorer() {
   // The headline count comes from the *live* filter state: selecting indices is
   // ~0.5ms even over 91k rows, so there is no reason to make the number wait
   // for the charts.
+  // Constant per report: how much the default view is holding back.
+  const supersededCount = useMemo(
+    () => rows.reduce((n, r) => n + (r.isLatestImage === 'No' ? 1 : 0), 0),
+    [rows],
+  )
+
   const shownCount = useMemo(
     () => (store ? selectIndices(store, effective).length : rows.length),
     [store, effective, rows.length],
@@ -183,6 +189,7 @@ function Explorer() {
         onSwitchSheet={report.switchSheet}
         recalled={report.recalled}
         onForgetSheet={report.forgetChoice}
+        supersededCount={supersededCount}
       />
 
       <div className="flex min-h-0 flex-1">

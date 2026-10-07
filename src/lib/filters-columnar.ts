@@ -28,6 +28,7 @@ interface Compiled {
   cvss: RangeSpec | null
   discovered: RangeSpec | null
   cveOnlyMask: CodeMask | null
+  latestMask: CodeMask | null
 }
 
 function compile(store: ColumnStore, f: FilterState, exclude?: string): Compiled {
@@ -38,6 +39,7 @@ function compile(store: ColumnStore, f: FilterState, exclude?: string): Compiled
     cvss: null,
     discovered: null,
     cveOnlyMask: null,
+    latestMask: null,
   }
 
   for (const [key, values] of Object.entries(f.facets)) {
@@ -92,6 +94,27 @@ function compile(store: ColumnStore, f: FilterState, exclude?: string): Compiled
     out.cveOnlyMask = { key: 'cve', codes: col.codes, allowed }
   }
 
+  if (f.latestOnly) {
+    // "Newest image in its (repo, branch) pair" is precomputed per row at parse
+    // time, so here it is just another dictionary lookup.
+    const col = dictColumn(store, 'isLatestImage')
+    if (col) {
+      const allowed = new Uint8Array(col.dict.length)
+      let any = false
+      for (let c = 0; c < col.dict.length; c++) {
+        if (col.dict[c] !== 'No') {
+          allowed[c] = 1
+          any = true
+        }
+      }
+      if (!any) {
+        out.empty = true
+        return out
+      }
+      out.latestMask = { key: 'isLatestImage', codes: col.codes, allowed }
+    }
+  }
+
   return out
 }
 
@@ -105,6 +128,7 @@ function inRange(spec: RangeSpec, i: number): boolean {
 function passesNonFacet(c: Compiled, i: number): boolean {
   if (c.search !== null && c.search[i] === 0) return false
   if (c.cveOnlyMask !== null && c.cveOnlyMask.allowed[c.cveOnlyMask.codes[i]] === 0) return false
+  if (c.latestMask !== null && c.latestMask.allowed[c.latestMask.codes[i]] === 0) return false
   if (c.cvss !== null && !inRange(c.cvss, i)) return false
   if (c.discovered !== null && !inRange(c.discovered, i)) return false
   return true

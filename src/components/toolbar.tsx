@@ -7,6 +7,7 @@ import {
   MonitorIcon,
   MoonIcon,
   SearchIcon,
+  LayersIcon,
   SheetIcon,
   SunIcon,
   WifiIcon,
@@ -27,6 +28,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { CVE_SOURCES } from '@/lib/cve'
@@ -36,6 +39,7 @@ import { countActiveFilters, type FilterState } from '@/lib/filters'
 import type { ReportMeta, SheetInfo } from '@/lib/parse'
 import type { Recall } from '@/lib/sheet-prefs'
 import { FIELD_BY_KEY } from '@/lib/schema'
+import { cn } from '@/lib/utils'
 
 const DERIVED_LABELS: Record<string, string> = {
   surface: 'Surface',
@@ -67,6 +71,7 @@ export function Toolbar({
   onSwitchSheet,
   recalled,
   onForgetSheet,
+  supersededCount,
 }: {
   filters: FilterState
   setFilters: (f: FilterState) => void
@@ -82,6 +87,8 @@ export function Toolbar({
   onSwitchSheet: (name: string) => void
   recalled: Recall | null
   onForgetSheet: () => void
+  /** Findings on images that a newer build of the same branch has replaced. */
+  supersededCount: number
 }) {
   const active = countActiveFilters(filters)
   const filtered = shown !== total
@@ -120,6 +127,51 @@ export function Toolbar({
           </>
         )}
       </div>
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div
+            className={cn(
+              'flex shrink-0 items-center gap-2 rounded-md border px-2 py-1',
+              !filters.latestOnly && 'border-sev-high/40 bg-sev-high/10',
+            )}
+          >
+            <LayersIcon
+              className={cn('size-3.5', filters.latestOnly ? 'text-muted-foreground' : 'text-sev-high')}
+            />
+            <Label htmlFor="latest-only" className="cursor-pointer text-xs font-normal">
+              Latest images only
+            </Label>
+            <Switch
+              id="latest-only"
+              checked={filters.latestOnly}
+              onCheckedChange={(v) => setFilters({ ...filters, latestOnly: v })}
+            />
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="max-w-sm">
+          {filters.latestOnly ? (
+            <>
+              Showing only the newest image in each repo + branch pair.
+              {supersededCount > 0 && (
+                <>
+                  {' '}
+                  <span className="font-medium">{num(supersededCount)} findings</span> on images that a newer
+                  build has replaced are hidden — many will already be fixed.
+                </>
+              )}
+              <span className="text-muted-foreground mt-1 block">
+                Recency comes from the build timestamp in the image tag. Turn this off to see history.
+              </span>
+            </>
+          ) : (
+            <>
+              Showing <span className="font-medium">every image in the export</span>, including builds that
+              have since been replaced. Counts here include findings that may already be fixed.
+            </>
+          )}
+        </TooltipContent>
+      </Tooltip>
 
       {active > 0 && (
         <Button variant="ghost" size="xs" onClick={clearAll}>
